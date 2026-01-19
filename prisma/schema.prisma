@@ -5,14 +5,12 @@ generator client {
   provider = "prisma-client-js"
 }
 
-// Note that some adapters may set a maximum length for the String type by default, please ensure your strings are long
-// enough when changing adapters.
-// See https://www.prisma.io/docs/orm/reference/prisma-schema-reference#string for more information
 datasource db {
-  provider = "sqlite"
-  url      = "file:dev.sqlite"
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
+// Shopify session storage (required for Shopify auth)
 model Session {
   id                  String    @id
   shop                String
@@ -31,4 +29,43 @@ model Session {
   emailVerified       Boolean?  @default(false)
   refreshToken        String?
   refreshTokenExpires DateTime?
+}
+
+// Connected Shopify store and subscription info
+model Shop {
+  id                  String     @id @default(cuid())
+  shopifyDomain       String     @unique
+  accessToken         String
+  plan                String     @default("trial")
+  videosUsedThisMonth Int        @default(0)
+  billingCycleStart   DateTime   @default(now())
+  createdAt           DateTime   @default(now())
+  updatedAt           DateTime   @updatedAt
+  videoJobs           VideoJob[]
+}
+
+// Video generation job
+model VideoJob {
+  id               String         @id @default(cuid())
+  shopId           String
+  shop             Shop           @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  shopifyProductId String
+  sourceImageUrls  String[]
+  templateId       String
+  status           String         @default("queued")
+  videoUrl         String?
+  errorMessage     String?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  embeds           ProductEmbed[]
+}
+
+// Tracks videos embedded on product pages
+model ProductEmbed {
+  id               String   @id @default(cuid())
+  videoJobId       String
+  videoJob         VideoJob @relation(fields: [videoJobId], references: [id], onDelete: Cascade)
+  shopifyProductId String
+  shopifyMediaId   String
+  createdAt        DateTime @default(now())
 }
