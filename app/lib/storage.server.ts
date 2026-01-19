@@ -40,6 +40,9 @@ export async function getSignedVideoUrl(key: string): Promise<string> {
 
 export async function uploadVideoFromUrl(key: string, videoUrl: string): Promise<string> {
   const response = await fetch(videoUrl);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch video: ${response.status}`);
+  }
   const buffer = Buffer.from(await response.arrayBuffer());
   return uploadVideo(key, buffer);
 }
