@@ -1,8 +1,9 @@
-node_modules
+node_modules/
 .DS_Store
 
 /.cache
 /build
+build/
 /app/build
 /public/build/
 /public/_dev
@@ -12,7 +13,10 @@ node_modules
 database.sqlite
 
 .env
+.env.local
 .env.*
+
+.vercel/
 
 package-lock.json
 yarn.lock
