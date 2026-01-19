@@ -1,17 +1,16 @@
-import type { ActionFunctionArgs } from "@remix-run/node";
-import { authenticate } from "../shopify.server";
-import db from "../db.server";
+import { ActionFunctionArgs } from '@remix-run/node';
+import { authenticate } from '~/shopify.server';
+import { prisma } from '~/lib/db.server';
 
-export const action = async ({ request }: ActionFunctionArgs) => {
-  const { shop, session, topic } = await authenticate.webhook(request);
+export async function action({ request }: ActionFunctionArgs) {
+  const { shop } = await authenticate.webhook(request);
 
-  console.log(`Received ${topic} webhook for ${shop}`);
+  // Delete shop and all related data (cascades to VideoJobs and ProductEmbeds)
+  await prisma.shop.delete({
+    where: { shopifyDomain: shop },
+  }).catch(() => {
+    // Shop may not exist, ignore
+  });
 
-  // Webhook requests can trigger multiple times and after an app has already been uninstalled.
-  // If this webhook already ran, the session may have been deleted previously.
-  if (session) {
-    await db.session.deleteMany({ where: { shop } });
-  }
-
-  return new Response();
-};
+  return new Response(null, { status: 200 });
+}
