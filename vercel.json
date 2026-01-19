@@ -1,0 +1,11 @@
+{
+  "buildCommand": "npm run build",
+  "outputDirectory": "build",
+  "framework": "remix",
+  "crons": [
+    {
+      "path": "/api/cron/reset-billing",
+      "schedule": "0 0 * * *"
+    }
+  ]
+}
