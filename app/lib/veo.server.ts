@@ -1,4 +1,5 @@
 import { GoogleGenAI } from '@google/genai';
+import { Storage } from '@google-cloud/storage';
 import { logger } from '~/lib/logger.server';
 
 const client = new GoogleGenAI({
@@ -6,6 +7,31 @@ const client = new GoogleGenAI({
   project: process.env.GOOGLE_CLOUD_PROJECT!,
   location: process.env.GOOGLE_CLOUD_LOCATION || 'us-central1',
 });
+
+const storage = new Storage({
+  projectId: process.env.GOOGLE_CLOUD_PROJECT,
+});
+
+// Generate signed URL for GCS object (valid for 7 days)
+async function getSignedUrl(gcsUri: string): Promise<string> {
+  // Parse gs://bucket/path format
+  const match = gcsUri.match(/^gs:\/\/([^/]+)\/(.+)$/);
+  if (!match) {
+    throw new Error(`Invalid GCS URI: ${gcsUri}`);
+  }
+
+  const [, bucketName, filePath] = match;
+  const bucket = storage.bucket(bucketName);
+  const file = bucket.file(filePath);
+
+  const [signedUrl] = await file.getSignedUrl({
+    action: 'read',
+    expires: Date.now() + 7 * 24 * 60 * 60 * 1000, // 7 days
+  });
+
+  logger.debug('Generated signed URL', { gcsUri, expiresIn: '7 days' });
+  return signedUrl;
+}
 
 export interface GenerateVideoInput {
   prompt: string;
@@ -114,9 +140,9 @@ export async function pollVideoStatus(operationId: string): Promise<{
       const response = (result as any).response;
       if (response?.generatedVideos?.[0]?.video?.uri) {
         const gcsUri = response.generatedVideos[0].video.uri;
-        // Convert GCS URI to public URL if needed
-        const videoUrl = gcsUri.replace('gs://', `https://storage.googleapis.com/`);
-        logger.info('Video generation complete', { videoUrl });
+        // Generate signed URL for secure access
+        const videoUrl = await getSignedUrl(gcsUri);
+        logger.info('Video generation complete', { gcsUri });
         return { done: true, videoUrl };
       }
 
