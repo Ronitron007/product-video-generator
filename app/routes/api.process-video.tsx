@@ -20,34 +20,33 @@ const receiver = new Receiver({
 
 export async function action({ request }: ActionFunctionArgs) {
   const reqLog = logRequest('api.process-video');
-
-  // Verify QStash signature
-  const signature = request.headers.get('upstash-signature');
   const body = await request.text();
 
-  if (!signature) {
-    logger.warn('Missing QStash signature', { route: 'api.process-video' });
-    reqLog.end('error', { reason: 'missing_signature' });
-    return json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  // Skip QStash verification in development for local testing
+  const isDev = process.env.NODE_ENV === 'development';
+  if (!isDev) {
+    const signature = request.headers.get('upstash-signature');
 
-  try {
-    // Don't pass URL - protocol mismatch between Cloudflare tunnel (http) and QStash (https)
-    // Signature verification is sufficient for security
-    const isValid = await receiver.verify({
-      signature,
-      body,
-    });
-
-    if (!isValid) {
-      logger.warn('Invalid QStash signature', { route: 'api.process-video' });
-      reqLog.end('error', { reason: 'invalid_signature' });
+    if (!signature) {
+      logger.warn('Missing QStash signature', { route: 'api.process-video' });
+      reqLog.end('error', { reason: 'missing_signature' });
       return json({ error: 'Unauthorized' }, { status: 401 });
     }
-  } catch (error) {
-    logger.error('QStash verification failed', { route: 'api.process-video', error: error instanceof Error ? error.message : String(error) });
-    reqLog.end('error', { reason: 'verification_failed' });
-    return json({ error: 'Unauthorized' }, { status: 401 });
+
+    try {
+      const isValid = await receiver.verify({ signature, body });
+      if (!isValid) {
+        logger.warn('Invalid QStash signature', { route: 'api.process-video' });
+        reqLog.end('error', { reason: 'invalid_signature' });
+        return json({ error: 'Unauthorized' }, { status: 401 });
+      }
+    } catch (error) {
+      logger.error('QStash verification failed', { route: 'api.process-video', error: error instanceof Error ? error.message : String(error) });
+      reqLog.end('error', { reason: 'verification_failed' });
+      return json({ error: 'Unauthorized' }, { status: 401 });
+    }
+  } else {
+    logger.warn('Skipping QStash verification in development', { route: 'api.process-video' });
   }
 
   const payload: VideoJobPayload = JSON.parse(body);
