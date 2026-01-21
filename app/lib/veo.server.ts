@@ -137,7 +137,7 @@ export async function pollVideoStatus(operationId: string): Promise<{
       operation = { name: operationId };
     }
 
-    const result = await client.operations.get({ operation });
+    const result = await client.operations.getVideosOperation({ operation });
 
     logger.debug('Poll result', {
       done: result.done,
