@@ -13,16 +13,14 @@ import {
   Badge,
 } from '@shopify/polaris';
 import { authenticate } from '~/shopify.server';
-import { getShopByDomain, PLAN_LIMITS } from '~/services/shop.server';
+import { getOrCreateShop, PLAN_LIMITS } from '~/services/shop.server';
 import { getJobsByShop } from '~/services/video-job.server';
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { session } = await authenticate.admin(request);
-  const shop = await getShopByDomain(session.shop);
 
-  if (!shop) {
-    return json({ shop: null, recentVideos: [] });
-  }
+  // Create shop if it doesn't exist
+  const shop = await getOrCreateShop(session.shop, session.accessToken || '');
 
   const jobs = await getJobsByShop(shop.id);
   const recentVideos = jobs.slice(0, 6);

@@ -1,16 +1,12 @@
 import { json, ActionFunctionArgs } from '@remix-run/node';
 import { authenticate } from '~/shopify.server';
-import { getShopByDomain, canGenerateVideo } from '~/services/shop.server';
+import { getOrCreateShop, canGenerateVideo } from '~/services/shop.server';
 import { createVideoJob } from '~/services/video-job.server';
 import { addVideoJob } from '~/lib/queue.server';
 
 export async function action({ request }: ActionFunctionArgs) {
   const { session } = await authenticate.admin(request);
-  const shop = await getShopByDomain(session.shop);
-
-  if (!shop) {
-    return json({ error: 'Shop not found' }, { status: 404 });
-  }
+  const shop = await getOrCreateShop(session.shop, session.accessToken || '');
 
   // Check plan limits
   if (!canGenerateVideo(shop)) {
