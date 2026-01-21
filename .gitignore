@@ -1,6 +1,6 @@
 node_modules/
 .DS_Store
-
+gen-lang-client-0518218630-eab6a3d197d7.json
 /.cache
 /build
 build/
@@ -29,3 +29,8 @@ pnpm-lock.yaml
 .shopify.lock
 .vercel
 .env*.local
+*.json
+!package.json
+!package-lock.json
+!tsconfig.json
+!vercel.json

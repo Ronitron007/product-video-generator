@@ -2,14 +2,21 @@ import { GoogleGenAI } from '@google/genai';
 import { Storage } from '@google-cloud/storage';
 import { logger } from '~/lib/logger.server';
 
+// Parse credentials from env var (JSON string) for Vercel deployment
+const credentials = process.env.GOOGLE_CREDENTIALS
+  ? JSON.parse(process.env.GOOGLE_CREDENTIALS)
+  : undefined;
+
 const client = new GoogleGenAI({
   vertexai: true,
   project: process.env.GOOGLE_CLOUD_PROJECT!,
   location: process.env.GOOGLE_CLOUD_LOCATION || 'us-central1',
+  googleAuthOptions: credentials ? { credentials } : undefined,
 });
 
 const storage = new Storage({
   projectId: process.env.GOOGLE_CLOUD_PROJECT,
+  credentials,
 });
 
 // Generate signed URL for GCS object (valid for 7 days)
