@@ -1,19 +1,7 @@
-import { Queue, Worker, Job } from 'bullmq';
-import IORedis from 'ioredis';
+import { Client } from '@upstash/qstash';
 
-const connection = new IORedis(process.env.REDIS_URL!, {
-  maxRetriesPerRequest: null,
-});
-
-export const videoQueue = new Queue('video-generation', {
-  connection,
-  defaultJobOptions: {
-    attempts: 3,
-    backoff: {
-      type: 'exponential',
-      delay: 5000,
-    },
-  },
+const qstash = new Client({
+  token: process.env.QSTASH_TOKEN!,
 });
 
 export interface VideoJobData {
@@ -24,5 +12,12 @@ export interface VideoJobData {
 }
 
 export async function addVideoJob(data: VideoJobData) {
-  return videoQueue.add('generate', data);
+  const baseUrl = process.env.SHOPIFY_APP_URL || process.env.VERCEL_URL;
+  const endpoint = `${baseUrl}/api/process-video`;
+
+  return qstash.publishJSON({
+    url: endpoint,
+    body: data,
+    retries: 3,
+  });
 }
