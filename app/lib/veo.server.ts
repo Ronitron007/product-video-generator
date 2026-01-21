@@ -1,5 +1,6 @@
 import { GoogleGenAI } from '@google/genai';
 import { Storage } from '@google-cloud/storage';
+import { GoogleAuth } from 'google-auth-library';
 import { logger } from '~/lib/logger.server';
 
 // Parse credentials from env var (JSON string) for Vercel deployment
@@ -17,6 +18,12 @@ const client = new GoogleGenAI({
 const storage = new Storage({
   projectId: process.env.GOOGLE_CLOUD_PROJECT,
   credentials,
+});
+
+// Auth client for REST API calls
+const auth = new GoogleAuth({
+  credentials,
+  scopes: ['https://www.googleapis.com/auth/cloud-platform'],
 });
 
 // Generate signed URL for GCS object (valid for 7 days)
@@ -129,34 +136,46 @@ export async function pollVideoStatus(operationId: string): Promise<{
   logger.debug('Polling video status', { operationId: operationId.substring(0, 100) });
 
   try {
-    // Parse operation if it was stringified
-    let operation: any;
-    try {
-      operation = JSON.parse(operationId);
-    } catch {
-      operation = { name: operationId };
+    // Use REST API directly to avoid SDK serialization issues
+    // operationId format: projects/PROJECT/locations/LOCATION/publishers/google/models/MODEL/operations/OP_ID
+    const url = `https://${process.env.GOOGLE_CLOUD_LOCATION || 'us-central1'}-aiplatform.googleapis.com/v1/${operationId}`;
+
+    const authClient = await auth.getClient();
+    const accessToken = await authClient.getAccessToken();
+
+    const response = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${accessToken.token}`,
+      },
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      logger.error('Poll API error', { status: response.status, error: errorText });
+      throw new Error(`Poll failed: ${response.status} ${errorText}`);
     }
 
-    const result = await client.operations.getVideosOperation({ operation });
+    const result = await response.json();
 
     logger.debug('Poll result', {
       done: result.done,
-      hasError: !!(result as any).error,
-      hasResponse: !!(result as any).response,
+      hasError: !!result.error,
+      hasResponse: !!result.response,
     });
 
     if (result.done) {
-      const response = (result as any).response;
-      if (response?.generatedVideos?.[0]?.video?.uri) {
-        const gcsUri = response.generatedVideos[0].video.uri;
-        // Generate signed URL for secure access
-        const videoUrl = await getSignedUrl(gcsUri);
-        logger.info('Video generation complete', { gcsUri });
+      // Check for video in response (format varies between API versions)
+      const videos = result.response?.generatedVideos || result.response?.videos;
+      const videoUri = videos?.[0]?.video?.uri || videos?.[0]?.gcsUri;
+
+      if (videoUri) {
+        const videoUrl = await getSignedUrl(videoUri);
+        logger.info('Video generation complete', { gcsUri: videoUri });
         return { done: true, videoUrl };
       }
 
-      if ((result as any).error) {
-        const errorMsg = (result as any).error.message || 'Unknown error';
+      if (result.error) {
+        const errorMsg = result.error.message || JSON.stringify(result.error);
         logger.error('Video operation error', { error: errorMsg });
         return { done: true, error: errorMsg };
       }
