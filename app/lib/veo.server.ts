@@ -47,8 +47,11 @@ export interface GenerateVideoInput {
   aspectRatio?: '16:9' | '9:16' | '1:1';
 }
 
+// The operation object returned from the SDK - we keep this in memory for polling
+export type VideoOperation = Awaited<ReturnType<typeof client.models.generateVideos>>;
+
 export interface GenerateVideoResult {
-  operationId: string;
+  operation: VideoOperation;
 }
 
 export async function generateVideo(input: GenerateVideoInput): Promise<GenerateVideoResult> {
@@ -106,11 +109,11 @@ export async function generateVideo(input: GenerateVideoInput): Promise<Generate
       },
     });
 
-    // Store operation name as our operation ID
-    const operationId = (operation as any).name || JSON.stringify(operation);
-    logger.info('Veo API operation started', { operationId: operationId.substring(0, 100) });
+    const operationName = (operation as any).name || 'unknown';
+    logger.info('Veo API operation started', { operationName });
 
-    return { operationId };
+    // Return the full operation object to keep in memory for polling
+    return { operation };
   } catch (error) {
     logger.error('Veo API error', {
       error: error instanceof Error ? error.message : String(error),
@@ -121,22 +124,20 @@ export async function generateVideo(input: GenerateVideoInput): Promise<Generate
   }
 }
 
-export async function pollVideoStatus(operationId: string): Promise<{
+export interface PollVideoResult {
   done: boolean;
   videoUrl?: string;
   error?: string;
-}> {
-  logger.debug('Polling video status', { operationId: operationId.substring(0, 100) });
+  // Return the updated operation for the next poll cycle
+  operation: VideoOperation;
+}
+
+export async function pollVideoStatus(operation: VideoOperation): Promise<PollVideoResult> {
+  const operationName = (operation as any).name || 'unknown';
+  logger.debug('Polling video status', { operationName });
 
   try {
-    // Parse operation if it was stringified
-    let operation: any;
-    try {
-      operation = JSON.parse(operationId);
-    } catch {
-      operation = { name: operationId };
-    }
-
+    // Pass the operation object directly to the SDK (kept in memory)
     const result = await client.operations.getVideosOperation({ operation });
 
     logger.debug('Poll result', {
@@ -152,19 +153,20 @@ export async function pollVideoStatus(operationId: string): Promise<{
         // Generate signed URL for secure access
         const videoUrl = await getSignedUrl(gcsUri);
         logger.info('Video generation complete', { gcsUri });
-        return { done: true, videoUrl };
+        return { done: true, videoUrl, operation: result };
       }
 
       if ((result as any).error) {
         const errorMsg = (result as any).error.message || 'Unknown error';
         logger.error('Video operation error', { error: errorMsg });
-        return { done: true, error: errorMsg };
+        return { done: true, error: errorMsg, operation: result };
       }
 
-      return { done: true, error: 'No video URL in response' };
+      return { done: true, error: 'No video URL in response', operation: result };
     }
 
-    return { done: false };
+    // Return the updated operation object for the next poll
+    return { done: false, operation: result };
   } catch (error) {
     logger.error('Poll error', {
       error: error instanceof Error ? error.message : String(error),
