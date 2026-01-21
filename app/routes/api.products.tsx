@@ -1,48 +1,52 @@
 import { json, LoaderFunctionArgs } from '@remix-run/node';
 import { authenticate } from '~/shopify.server';
+import { logger, logRequest } from '~/lib/logger.server';
 
 export async function loader({ request }: LoaderFunctionArgs) {
-  const { admin } = await authenticate.admin(request);
+  const reqLog = logRequest('api.products');
 
-  const response = await admin.graphql(`
-    query GetProducts($first: Int!, $after: String) {
-      products(first: $first, after: $after) {
-        edges {
-          node {
-            id
-            title
-            handle
-            images(first: 10) {
-              edges {
-                node {
-                  id
-                  url
-                  altText
+  try {
+    const { admin, session } = await authenticate.admin(request);
+    logger.info('Fetching products', { shopDomain: session.shop, route: 'api.products' });
+
+    const response = await admin.graphql(`
+      query GetProducts($first: Int!, $after: String) {
+        products(first: $first, after: $after) {
+          edges {
+            node {
+              id
+              title
+              handle
+              images(first: 10) {
+                edges {
+                  node {
+                    id
+                    url
+                    altText
+                  }
                 }
               }
+              featuredImage {
+                url
+              }
             }
-            featuredImage {
-              url
-            }
+            cursor
           }
-          cursor
-        }
-        pageInfo {
-          hasNextPage
+          pageInfo {
+            hasNextPage
+          }
         }
       }
-    }
-  `, {
-    variables: {
-      first: 20,
-      after: new URL(request.url).searchParams.get('after') || null,
-    },
-  });
+    `, {
+      variables: {
+        first: 20,
+        after: new URL(request.url).searchParams.get('after') || null,
+      },
+    });
 
-  const data = await response.json();
+    const data = await response.json();
 
-  return json({
-    products: data.data.products.edges.map((edge: any) => ({
+    const products = data.data.products.edges.map((edge: any) => ({
       id: edge.node.id,
       title: edge.node.title,
       handle: edge.node.handle,
@@ -53,7 +57,18 @@ export async function loader({ request }: LoaderFunctionArgs) {
       })),
       featuredImage: edge.node.featuredImage?.url,
       cursor: edge.cursor,
-    })),
-    hasNextPage: data.data.products.pageInfo.hasNextPage,
-  });
+    }));
+
+    logger.info('Products fetched', { shopDomain: session.shop, productCount: products.length });
+    reqLog.end('success', { productCount: products.length });
+
+    return json({
+      products,
+      hasNextPage: data.data.products.pageInfo.hasNextPage,
+    });
+  } catch (error) {
+    logger.error('Fetch products failed', { error: error instanceof Error ? error.message : String(error) });
+    reqLog.end('error', { reason: 'exception' });
+    throw error;
+  }
 }
