@@ -94,12 +94,14 @@ export async function generateVideo(input: GenerateVideoInput): Promise<Generate
       model: 'veo-3.1-generate-001',
       prompt: input.prompt,
       image: {
-        bytesBase64Encoded: imageBase64,
+        imageBytes: imageBase64,
         mimeType,
       },
       config: {
         aspectRatio: input.aspectRatio || '16:9',
         durationSeconds: input.duration,
+        numberOfVideos: 1,
+        personGeneration: 'allow_all',
         outputGcsUri,
       },
     });

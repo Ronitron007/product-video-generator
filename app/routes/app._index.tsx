@@ -49,7 +49,7 @@ export default function Dashboard() {
               <InlineStack align="space-between">
                 <BlockStack gap="200">
                   <Text as="h2" variant="headingMd">
-                    Videos this month
+                    Videos this monthssss
                   </Text>
                   <Text as="p" variant="bodyLg">
                     {shop?.videosUsed ?? 0} / {shop?.videosLimit ?? 1}
