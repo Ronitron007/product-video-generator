@@ -1,7 +1,11 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenAI } from '@google/genai';
 import { logger } from '~/lib/logger.server';
 
-const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY!);
+const client = new GoogleGenAI({
+  vertexai: true,
+  project: process.env.GOOGLE_CLOUD_PROJECT!,
+  location: process.env.GOOGLE_CLOUD_LOCATION || 'us-central1',
+});
 
 export interface GenerateVideoInput {
   prompt: string;
@@ -22,58 +26,54 @@ export async function generateVideo(input: GenerateVideoInput): Promise<Generate
     promptLength: input.prompt.length,
   });
 
-  // Fetch images and convert to base64
-  const imageBuffers: string[] = [];
-  for (let i = 0; i < input.referenceImageUrls.length; i++) {
-    const url = input.referenceImageUrls[i];
-    try {
-      logger.debug('Fetching image', { index: i, url: url.substring(0, 100) });
-      const response = await fetch(url);
-      if (!response.ok) {
-        logger.error('Image fetch failed', { index: i, url: url.substring(0, 100), status: response.status, statusText: response.statusText });
-        throw new Error(`Failed to fetch image ${i}: ${response.status} ${response.statusText}`);
-      }
-      const buffer = await response.arrayBuffer();
-      imageBuffers.push(Buffer.from(buffer).toString('base64'));
-      logger.debug('Image fetched', { index: i, sizeBytes: buffer.byteLength });
-    } catch (error) {
-      logger.error('Image fetch error', { index: i, url: url.substring(0, 100), error: error instanceof Error ? error.message : String(error) });
-      throw error;
-    }
-  }
-
-  const model = genAI.getGenerativeModel({ model: 'veo-3.1' });
-
-  // Build reference images array
-  const referenceImages = imageBuffers.map((base64, i) => ({
-    inlineData: {
-      mimeType: 'image/jpeg',
-      data: base64,
-    },
-  }));
-
-  logger.info('Calling Veo API', { model: 'veo-3.1', imageCount: referenceImages.length });
+  // Fetch first image and convert to base64
+  const imageUrl = input.referenceImageUrls[0];
+  let imageBase64: string;
+  let mimeType: string;
 
   try {
-    const result = await model.generateContent({
-      contents: [
-        {
-          role: 'user',
-          parts: [
-            ...referenceImages,
-            { text: input.prompt },
-          ],
-        },
-      ],
-      generationConfig: {
-        // @ts-ignore - Veo specific config
-        videoDuration: input.duration,
+    logger.debug('Fetching reference image', { url: imageUrl.substring(0, 100) });
+    const response = await fetch(imageUrl);
+    if (!response.ok) {
+      logger.error('Image fetch failed', { url: imageUrl.substring(0, 100), status: response.status });
+      throw new Error(`Failed to fetch image: ${response.status} ${response.statusText}`);
+    }
+    const buffer = await response.arrayBuffer();
+    imageBase64 = Buffer.from(buffer).toString('base64');
+    mimeType = response.headers.get('content-type') || 'image/jpeg';
+    logger.debug('Image fetched', { sizeBytes: buffer.byteLength, mimeType });
+  } catch (error) {
+    logger.error('Image fetch error', { url: imageUrl.substring(0, 100), error: error instanceof Error ? error.message : String(error) });
+    throw error;
+  }
+
+  // Generate output GCS URI
+  const outputGcsUri = `gs://${process.env.GCS_BUCKET_NAME}/videos/${Date.now()}/`;
+
+  logger.info('Calling Veo API', {
+    model: 'veo-3.1-generate-001',
+    aspectRatio: input.aspectRatio || '16:9',
+    outputGcsUri,
+  });
+
+  try {
+    const operation = await client.models.generateVideos({
+      model: 'veo-3.1-generate-001',
+      prompt: input.prompt,
+      image: {
+        bytesBase64Encoded: imageBase64,
+        mimeType,
+      },
+      config: {
         aspectRatio: input.aspectRatio || '16:9',
+        durationSeconds: input.duration,
+        outputGcsUri,
       },
     });
 
-    const operationId = (result as any).operationId || result.response.text();
-    logger.info('Veo API response received', { operationId, hasOperationId: !!(result as any).operationId });
+    // Store operation name as our operation ID
+    const operationId = (operation as any).name || JSON.stringify(operation);
+    logger.info('Veo API operation started', { operationId: operationId.substring(0, 100) });
 
     return { operationId };
   } catch (error) {
@@ -91,34 +91,47 @@ export async function pollVideoStatus(operationId: string): Promise<{
   videoUrl?: string;
   error?: string;
 }> {
-  logger.debug('Polling video status', { operationId });
-
-  const model = genAI.getGenerativeModel({ model: 'veo-3.1' });
+  logger.debug('Polling video status', { operationId: operationId.substring(0, 100) });
 
   try {
-    const result = await (model as any).getOperation(operationId);
-
-    logger.debug('Poll result', { operationId, done: result.done, hasError: !!result.error, hasVideoUrl: !!result.response?.videoUrl });
-
-    if (result.done) {
-      return {
-        done: true,
-        videoUrl: result.response?.videoUrl,
-      };
+    // Parse operation if it was stringified
+    let operation: any;
+    try {
+      operation = JSON.parse(operationId);
+    } catch {
+      operation = { name: operationId };
     }
 
-    if (result.error) {
-      logger.error('Video operation error', { operationId, error: result.error.message });
-      return {
-        done: true,
-        error: result.error.message,
-      };
+    const result = await client.operations.get({ operation });
+
+    logger.debug('Poll result', {
+      done: result.done,
+      hasError: !!(result as any).error,
+      hasResponse: !!(result as any).response,
+    });
+
+    if (result.done) {
+      const response = (result as any).response;
+      if (response?.generatedVideos?.[0]?.video?.uri) {
+        const gcsUri = response.generatedVideos[0].video.uri;
+        // Convert GCS URI to public URL if needed
+        const videoUrl = gcsUri.replace('gs://', `https://storage.googleapis.com/`);
+        logger.info('Video generation complete', { videoUrl });
+        return { done: true, videoUrl };
+      }
+
+      if ((result as any).error) {
+        const errorMsg = (result as any).error.message || 'Unknown error';
+        logger.error('Video operation error', { error: errorMsg });
+        return { done: true, error: errorMsg };
+      }
+
+      return { done: true, error: 'No video URL in response' };
     }
 
     return { done: false };
   } catch (error) {
     logger.error('Poll error', {
-      operationId,
       error: error instanceof Error ? error.message : String(error),
       stack: error instanceof Error ? error.stack : undefined,
     });
