@@ -32,10 +32,11 @@ export async function action({ request }: ActionFunctionArgs) {
   }
 
   try {
+    // Don't pass URL - protocol mismatch between Cloudflare tunnel (http) and QStash (https)
+    // Signature verification is sufficient for security
     const isValid = await receiver.verify({
       signature,
       body,
-      url: request.url,
     });
 
     if (!isValid) {
